@@ -1,4 +1,4 @@
-# filepath: /home/DoctorFerpy/Documents/WRO/Doctor_ferpy_V9.4/main.py
+# filepath: /home/DoctorFerpy/Documents/WRO/Dr_Ferpy_WRO/main.py
 import os
 import json
 import face_recognition_module
@@ -164,49 +164,36 @@ def save_patients_db(db, filename="patients_database.json"):
     with open(filename, "w") as f:
         json.dump(db, f, indent=4)
 
-def main():
-    # Load the face database
-    database = face_recognition_module.load_database()
-
-    # Load patients database from file
-    patients_db = load_patients_db()
-
-    # Define the initial image path
-    initial_image = "initial.jpg"
-    print("Capturing initial image for face recognition...")
-    if camera_module:
-        camera_module.capture_and_save_image(initial_image)
-    else:
-        print("Camera module unavailable. Using existing 'initial.jpg'.")
-
+def capture_patient_name(database, initial_image="initial.jpg"):
+    """
+    Performs facial recognition to identify or register a patient.
+    Returns the patient's name.
+    """
+    import time
     user_name = None
     identify_user_try = 0
-    # Initialize the robot command handler
-    robot = RobotCommandHandler()
-
-    while not user_name:
+    while not user_name and identify_user_try < 10:
         if camera_module:
             print("Please look at the camera.")
             speak_text("Por favor, mire a la cámara.")
-            print("Taking a new image in 3...")
-            speak_text("Tomando una nueva imagen en 3...")
-            print("2...")
-            speak_text("2...")
-            print("1")
-            speak_text("1...")
+            for msg in ["Tomando una nueva imagen en 3...", "2...", "1..."]:
+                print(msg)
+                speak_text(msg)
+                time.sleep(1)
             camera_module.capture_and_save_image(initial_image)
             detected_face = face_recognition_module.detect_face(initial_image)
             if detected_face:
-                user_name = face_recognition_module.identify_user(initial_image, database)
-                if not user_name:
+                candidate = face_recognition_module.identify_user(initial_image, database)
+                if candidate:
+                    user_name = candidate
+                else:
                     print("Face detected but not recognized. Asking for name to register.")
-                    speak_text("Se detectó una cara, pero no está registrada por favor di tu nombre para registrarte.")
+                    speak_text("Se detectó una cara, pero no está registrada, por favor di tu nombre para registrarte.")
                     time.sleep(1)
-                    for attempt in range(2):  # Allow 2 attempts to capture the name
+                    for attempt in range(2):
                         time.sleep(1)
                         user_name_text = listen_for_name()
                         if user_name_text:
-                            print(f"Received name: {user_name_text}")
                             user_name = user_name_text.strip()
                             face_recognition_module.register_user(user_name, initial_image, database)
                             print(f"User {user_name} registered successfully.")
@@ -221,10 +208,9 @@ def main():
             else:
                 print("No face detected. Asking for name via voice.")
                 speak_text("No se detectó ninguna cara. Por favor, di tu nombre.")
-                for attempt in range(2):  # Allow 2 attempts to capture the name
+                for attempt in range(2):
                     user_name_text = listen_for_name()
                     if user_name_text:
-                        print(f"Received name: {user_name_text}")
                         user_name = user_name_text.strip()
                         break
                     else:
@@ -235,17 +221,30 @@ def main():
                     print("Failed to capture name after 2 attempts. Setting default name 'Paciente'.")
                     user_name = "Paciente"
                     break
-
         identify_user_try += 1
-        if identify_user_try >= 10:
-            print("Maximum attempts reached. Exiting.")
+        if identify_user_try >= 10 and not user_name:
+            print("Maximum attempts reached. Defaulting to 'Paciente'.")
+            user_name = "Paciente"
             break
         time.sleep(1)
+    return user_name
 
+def initialize_patient(database, patients_db, initial_image="initial.jpg"):
+    """
+    Captures an initial image, obtains the patient's name via facial recognition and/or voice,
+    and loads or creates the patient data in patients_db.
+    Returns (user_name, patient_data).
+    """
+    print("Capturing initial image for face recognition...")
+    if camera_module:
+        camera_module.capture_and_save_image(initial_image)
+    else:
+        print("Camera module unavailable. Using existing 'initial.jpg'.")
+
+    user_name = capture_patient_name(database, initial_image)
     print(f"Welcome, {user_name}!")
     speak_text(f"Bienvenido, {user_name}!")
 
-    # Load or initialize the patient data using patients_db:
     if user_name in patients_db:
         patient_data = patients_db[user_name]
     else:
@@ -261,10 +260,16 @@ def main():
         patients_db[user_name] = patient_data
         save_patients_db(patients_db)
 
-    # Assign the loaded patient_data to the robot so that registration commands update it
-    robot.patient_data = patient_data
+    return user_name, patient_data
 
-    # Loop for Gemini interaction
+
+def conversation_loop(robot, patients_db, user_name):
+    """
+    Runs the conversation loop with Gemini.
+    Captures an interaction image for each command,
+    sends the prompt to Gemini, processes the response,
+    and updates the patient data.
+    """
     conversation_messages = []
     while True:
         print("Esperando 'Doctor Ferpy' para iniciar el comando...")
@@ -290,6 +295,23 @@ def main():
         # Update patient data in the patients_db and save changes
         patients_db[user_name] = robot.patient_data
         save_patients_db(patients_db)
+
+
+def main():
+    # Load the face database and patients database
+    database = face_recognition_module.load_database()
+    patients_db = load_patients_db()
+
+    # Set up patient data
+    user_name, patient_data = initialize_patient(database, patients_db)
+    
+    # Initialize robot command handler and assign patient data
+    robot = RobotCommandHandler()
+    robot.patient_data = patient_data
+
+    # Start the Gemini conversation loop
+    conversation_loop(robot, patients_db, user_name)
+
 
 if __name__ == '__main__':
     main()
