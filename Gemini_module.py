@@ -3,35 +3,39 @@ import PIL.Image
 from dotenv import load_dotenv
 import os
 
-# Load environment variables
+# Carga las variables de entorno desde el archivo .env
 load_dotenv()
 
-# Configure the Gemini API
+# Configura la API de Gemini con la clave obtenida de las variables de entorno
 genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
 
 def initialize_gemini():
-    """Initialize the Gemini model."""
+    """Inicializa el modelo de Gemini."""
     model = genai.GenerativeModel('models/gemini-2.5-flash')
     return model
 
 def gemini_interaction(conversation_messages, prompt, image_path, patient_data):
     """
-    Supports multi-turn conversations using a stateless, full-history method.
-    conversation_messages: a list that holds the entire conversation history.
-    prompt: the new user message (string)
-    image_path: path to an image file to include as additional input
-    patient_data: a dict with patient variables ('edad', 'peso', 'altura')
-    Returns a tuple (candidate_text, updated_conversation_messages)
+    Soporta conversaciones de múltiples turnos usando un método sin estado, con historial completo.
+    Args:
+        conversation_messages (list): Una lista que contiene todo el historial de la conversación.
+        prompt (str): El nuevo mensaje del usuario.
+        image_path (str): Ruta a un archivo de imagen para incluir como entrada adicional.
+        patient_data (dict): Un diccionario con las variables del paciente ('edad', 'peso', 'altura', etc.).
+    Returns:
+        tuple: Una tupla que contiene (candidate_text, updated_conversation_messages).
     """
     try:
         model = initialize_gemini()
         image = PIL.Image.open(image_path)
-        
+
+        # Si no hay mensajes en el historial, añade el mensaje del sistema.
         if not conversation_messages:
             system_message = (
                 f"\nDatos del paciente:\n"
                 f"{patient_data}\n"
                 "Si hay datos del paciente desconocidos, pidelos al paciente y registralos con los siguientes commandos, utiliza solo si el paciente ya te dio el dato, por ejemplo si el paciente te da el peso solo registraras el peso y esperaras a que el paciente te de la edad y altura para registrarlos:\n"
+                "   <registrar_nombre [valor]>: registrar el nombre del paciente. Solo usa este comando si se te indica explícitamente que una cara no fue reconocida y necesitas pedir el nombre.\n"
                 "   <registrar_edad [valor]>: registrar la edad.\n"
                 "   <registrar_peso [valor]>: registrar el peso en kilogramos.\n"
                 "   <registrar_altura [valor]>: registrar la altura en metros.\n"
@@ -68,20 +72,21 @@ def gemini_interaction(conversation_messages, prompt, image_path, patient_data):
                 "role": "model",
                 "parts": [system_message]
             })
-        
-        # Create a chat session with the existing conversation history.
+
+        # Crea una sesión de chat con el historial de conversación existente.
         chat = model.start_chat(history=conversation_messages)
-        
-        # Send the new user message (with both text and image) through the chat.
+
+        # Envía el nuevo mensaje del usuario (con texto e imagen) a través del chat.
         response = chat.send_message([prompt, image])
-        
-        # Extract the text from the first candidate's first part.
+
+        # Extrae el texto de la primera parte del primer candidato de la respuesta.
         candidate_text = response.candidates[0].content.parts[0].text if response.candidates[0].content.parts else ""
-        
-        # Get the updated conversation history from the chat session.
+
+        # Obtiene el historial de conversación actualizado de la sesión de chat.
         updated_conversation_messages = chat.history
-        
+
         return candidate_text, updated_conversation_messages
-        
+
     except Exception as e:
-        return f"Error in Gemini interaction: {str(e)}", conversation_messages
+        # En caso de error, devuelve un mensaje de error y el historial de mensajes actual.
+        return f"Error en la interacción con Gemini: {str(e)}", conversation_messages

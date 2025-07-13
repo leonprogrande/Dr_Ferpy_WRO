@@ -206,89 +206,64 @@ def save_patients_db(db, filename="patients_database.json"):
     with open(filename, "w") as f:
         json.dump(db, f, indent=4)
 
-def identify_or_register_patient(database, patients_db, image_path):
+def identify_or_register_patient(database, patients_db, image_path, current_user_name, current_patient_data):
     """
-    Identifica o registra a un paciente basándose en el reconocimiento facial.
-    Si no se reconoce, pide el nombre para registrarlo.
+    Identifica o marca para registro a un paciente basándose en el reconocimiento facial.
+    Si no se reconoce una cara, mantiene el usuario actual.
+    Si se detecta una cara pero no está registrada, indica a Gemini que debe registrar el nombre.
     Args:
         database (dict): La base de datos de reconocimiento facial.
         patients_db (dict): La base de datos de pacientes.
         image_path (str): La ruta de la imagen para el reconocimiento facial.
+        current_user_name (str): El nombre del usuario actual.
+        current_patient_data (dict): Los datos del paciente actual.
     Returns:
-        tuple: Una tupla que contiene (user_name, patient_data).
+        tuple: Una tupla que contiene (user_name, patient_data, needs_name_registration_prompt).
+        needs_name_registration_prompt es un booleano que indica si Gemini necesita registrar el nombre.
     """
-    user_name = None
-    patient_data = {}
+    needs_name_registration_prompt = False
 
-    if camera_module:
-        print("Tomando foto para reconocimiento facial...")
-        camera_module.capture_and_save_image(image_path) # Captura y guarda la imagen
-        detected_face = face_recognition_module.detect_face(image_path) # Detecta caras en la imagen
+    if not camera_module:
+        print("Módulo de cámara no disponible. Manteniendo usuario actual.")
+        return current_user_name, current_patient_data, needs_name_registration_prompt
 
-        if detected_face:
-            candidate = face_recognition_module.identify_user(image_path, database) # Intenta identificar al usuario
-            if candidate:
-                user_name = candidate
-                print(f"Paciente reconocido: {user_name}")
-                speak_text(f"Bienvenido de nuevo, {user_name}.")
-            else:
-                print("Cara detectada pero no reconocida. Pidiendo nombre para registrar.")
-                speak_text("Se detectó una cara, pero no está registrada. Por favor, di tu nombre para registrarte.")
-                for attempt in range(2): # Intenta capturar el nombre dos veces
-                    user_name_text = listen_for_name()
-                    if user_name_text:
-                        user_name = user_name_text.strip()
-                        face_recognition_module.register_user(user_name, image_path, database) # Registra al nuevo usuario
-                        print(f"Usuario {user_name} registrado exitosamente.")
-                        speak_text(f"Bienvenido, {user_name}. Te he registrado en mi sistema.")
-                        break
-                    else:
-                        print("No se pudo capturar el nombre. Intentando de nuevo.")
-                        speak_text("No se pudo capturar tu nombre. Intenta de nuevo.")
-                if not user_name:
-                    print("Fallo al capturar el nombre después de 2 intentos. Usando nombre por defecto 'Paciente Desconocido'.")
-                    user_name = "Paciente Desconocido"
-                    speak_text("No pude registrar tu nombre. Te llamaré Paciente Desconocido.")
+    print("Tomando foto para reconocimiento facial...")
+    camera_module.capture_and_save_image(image_path) # Captura y guarda la imagen
+    detected_face = face_recognition_module.detect_face(image_path) # Detecta caras en la imagen
+
+    if not detected_face:
+        print("No se detectó ninguna cara. Manteniendo usuario actual.")
+        # Si no se detecta cara, se sigue usando el usuario actual.
+        return current_user_name, current_patient_data, needs_name_registration_prompt
+
+    candidate = face_recognition_module.identify_user(image_path, database) # Intenta identificar al usuario
+
+    if candidate:
+        user_name = candidate
+        print(f"Paciente reconocido: {user_name}")
+        # speak_text(f"Bienvenido de nuevo, {user_name}.") # Mensaje de bienvenida eliminado
+        if user_name in patients_db:
+            patient_data = patients_db[user_name]
         else:
-            print("No se detectó ninguna cara. Pidiendo nombre por voz.")
-            speak_text("No se detectó ninguna cara. Por favor, di tu nombre.")
-            for attempt in range(2): # Intenta capturar el nombre dos veces
-                user_name_text = listen_for_name()
-                if user_name_text:
-                    user_name = user_name_text.strip()
-                    # No se registra la cara si no se detectó
-                    print(f"Usuario identificado por voz: {user_name}")
-                    speak_text(f"Hola, {user_name}.")
-                    break
-                else:
-                    print("No se pudo capturar el nombre. Intentando de nuevo.")
-                    speak_text("No se pudo capturar tu nombre. Intenta de nuevo.")
-            if not user_name:
-                print("Fallo al capturar el nombre después de 2 intentos. Usando nombre por defecto 'Paciente Desconocido'.")
-                user_name = "Paciente Desconocido"
-                speak_text("No pude identificar tu nombre. Te llamaré Paciente Desconocido.")
+            # Esto podría ocurrir si la cara está en la base de datos facial pero no en la de pacientes
+            patient_data = {
+                'nombre': user_name,
+                'edad': 'desconocida',
+                'peso': 'desconocido',
+                'altura': 'desconocida',
+                'temperatura': 'desconocida',
+                'sexo': 'desconocido',
+                'comentario_importante': 'desconocido'
+            }
+            patients_db[user_name] = patient_data
+            save_patients_db(patients_db)
+        return user_name, patient_data, needs_name_registration_prompt
     else:
-        print("Módulo de cámara no disponible. Usando 'Paciente Desconocido' por defecto.")
-        user_name = "Paciente Desconocido"
-        speak_text("El módulo de la cámara no está disponible. Te llamaré Paciente Desconocido.")
-
-    # Carga o inicializa los datos del paciente en la base de datos de pacientes
-    if user_name in patients_db:
-        patient_data = patients_db[user_name]
-    else:
-        patient_data = {
-            'nombre': user_name,
-            'edad': 'desconocida',
-            'peso': 'desconocido',
-            'altura': 'desconocida',
-            'temperatura': 'desconocida',
-            'sexo': 'desconocido',
-            'comentario_importante': 'desconocido'
-        }
-        patients_db[user_name] = patient_data
-        save_patients_db(patients_db) # Guarda la base de datos actualizada
-
-    return user_name, patient_data
+        print("Cara detectada pero no registrada. Se informará a Gemini para registrar el nombre.")
+        needs_name_registration_prompt = True
+        # Se mantiene el usuario actual hasta que Gemini registre un nuevo nombre.
+        # Gemini será responsable de pedir el nombre y usar el comando registrar_nombre.
+        return current_user_name, current_patient_data, needs_name_registration_prompt
 
 
 def conversation_loop(robot, patients_db):
@@ -302,6 +277,24 @@ def conversation_loop(robot, patients_db):
         patients_db (dict): La base de datos de pacientes.
     """
     conversation_messages = [] # Inicializa el historial de mensajes de la conversación
+    # Inicializa el usuario y los datos del paciente para el inicio del bucle
+    current_user_name = "Paciente Desconocido"
+    current_patient_data = {
+        'nombre': current_user_name,
+        'edad': 'desconocida',
+        'peso': 'desconocido',
+        'altura': 'desconocida',
+        'temperatura': 'desconocida',
+        'sexo': 'desconocido',
+        'comentario_importante': 'desconocido'
+    }
+    # Asegura que "Paciente Desconocido" esté en la base de datos de pacientes al inicio
+    if current_user_name not in patients_db:
+        patients_db[current_user_name] = current_patient_data
+        save_patients_db(patients_db)
+
+    robot.patient_data = current_patient_data # Asigna los datos iniciales al robot
+
     while True:
         # Esperar el comando de voz del usuario
         user_prompt_text = listen_for_command()
@@ -309,21 +302,44 @@ def conversation_loop(robot, patients_db):
 
         # Tomar foto para reconocimiento facial y contexto espacial
         interaction_image_path = "interaction.jpg"
-        user_name, patient_data = identify_or_register_patient(
-            face_recognition_module.load_database(), patients_db, interaction_image_path
+        user_name_from_recognition, patient_data_from_recognition, needs_name_registration = identify_or_register_patient(
+            face_recognition_module.load_database(), patients_db, interaction_image_path, current_user_name, current_patient_data
         )
-        robot.patient_data = patient_data # Asegura que los datos del paciente estén actualizados en el robot
+
+        # Actualizar el usuario y los datos del paciente si se reconoció una cara existente
+        # o si no se detectó ninguna cara (se mantiene el usuario actual).
+        if not needs_name_registration: # Si no necesita registro de nombre (es decir, se reconoció o no se detectó cara)
+            current_user_name = user_name_from_recognition
+            current_patient_data = patient_data_from_recognition
+            robot.patient_data = current_patient_data # Asegura que los datos del paciente estén actualizados en el robot
+
+        # Si se necesita registrar un nombre, añadir una instrucción especial al prompt para Gemini
+        if needs_name_registration:
+            # El prompt real del usuario se mantiene, pero se le añade una instrucción para Gemini.
+            # Gemini deberá interpretar esto y usar el comando registrar_nombre.
+            augmented_prompt = f"Cara no reconocida. Por favor, pide el nombre al paciente y regístralo con <registrar_nombre [nombre]>. El paciente dijo: {user_prompt_text}"
+            print(f"Prompt aumentado para Gemini (registro de nombre): {augmented_prompt}")
+        else:
+            augmented_prompt = user_prompt_text
 
         print("Enviando tu prompt a Gemini...")
         response_text, conversation_messages = Gemini_module.gemini_interaction(
-            conversation_messages, user_prompt_text, interaction_image_path, robot.patient_data
+            conversation_messages, augmented_prompt, interaction_image_path, robot.patient_data
         )
         print("Gemini responde:", response_text)
         print("Procesando la respuesta intercalando comandos y texto:")
         robot.execute_response_segments(response_text) # Ejecuta comandos y reproduce texto de la respuesta de Gemini
 
+        # Después de que Gemini responde y ejecuta comandos, si se registró un nuevo nombre,
+        # necesitamos actualizar el current_user_name y current_patient_data.
+        # El comando `registrar_nombre` en `RobotCommandHandler` debe actualizar `robot.patient_data['nombre']`.
+        # Por lo tanto, actualizamos `current_user_name` y `current_patient_data` con los valores del robot.
+        current_user_name = robot.patient_data['nombre']
+        current_patient_data = robot.patient_data
+
+
         # Actualiza los datos del paciente en la base de datos y guarda los cambios
-        patients_db[user_name] = robot.patient_data
+        patients_db[current_user_name] = current_patient_data
         save_patients_db(patients_db)
 
 
