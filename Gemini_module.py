@@ -62,6 +62,7 @@ def gemini_interaction(conversation_messages, prompt, image_path, patient_data):
                 "La imagen dada es una foto de tu camara que esta en tu cabeza, la utilizaras para saber tu contexto espacial.\n"
                 "No utilizes listas para responder, si tienes que dar una lista de cosas no utilizes vinetas ya que todo lo que digas se oira y el usuario no quiere escuchar apostrofe 1: botiquin. Por el estilo, utiliza comas si es necesario.\n"
                 "Responde en espanol y se corto al responder, recuerda que estas hablando con un paciente, todo lo que digas el paciente lo oira.\n"
+                "Aveces el prompt aparecera cortado o no coherente, eso es ya que el sistema de reconozimiento de voz aveces falla, intenta decifrar el mensaje en caso de que no sea coherente\n"
             )
             conversation_messages.append({
                 "role": "model",
