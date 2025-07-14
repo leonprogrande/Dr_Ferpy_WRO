@@ -206,22 +206,25 @@ def save_patients_db(db, filename="patients_database.json"):
     with open(filename, "w") as f:
         json.dump(db, f, indent=4)
 
-def identify_or_register_patient(database, patients_db, image_path, current_user_name, current_patient_data):
+def identify_or_register_patient(face_database, patients_db, image_path, current_user_name, current_patient_data):
     """
     Identifica o marca para registro a un paciente basándose en el reconocimiento facial.
     Si no se reconoce una cara, mantiene el usuario actual.
     Si se detecta una cara pero no está registrada, indica a Gemini que debe registrar el nombre.
     Args:
-        database (dict): La base de datos de reconocimiento facial.
+        face_database (dict): La base de datos de reconocimiento facial.
         patients_db (dict): La base de datos de pacientes.
         image_path (str): La ruta de la imagen para el reconocimiento facial.
         current_user_name (str): El nombre del usuario actual.
         current_patient_data (dict): Los datos del paciente actual.
     Returns:
-        tuple: Una tupla que contiene (user_name, patient_data, needs_name_registration_prompt).
+        tuple: Una tupla que contiene (user_name_identified, patient_data_identified, needs_name_registration_prompt).
+        user_name_identified y patient_data_identified son los datos del usuario que *se intentó* identificar.
         needs_name_registration_prompt es un booleano que indica si Gemini necesita registrar el nombre.
     """
     needs_name_registration_prompt = False
+    user_name_identified = current_user_name
+    patient_data_identified = current_patient_data
 
     if not camera_module:
         print("Módulo de cámara no disponible. Manteniendo usuario actual.")
@@ -236,18 +239,18 @@ def identify_or_register_patient(database, patients_db, image_path, current_user
         # Si no se detecta cara, se sigue usando el usuario actual.
         return current_user_name, current_patient_data, needs_name_registration_prompt
 
-    candidate = face_recognition_module.identify_user(image_path, database) # Intenta identificar al usuario
+    candidate = face_recognition_module.identify_user(image_path, face_database) # Intenta identificar al usuario
 
     if candidate:
-        user_name = candidate
-        print(f"Paciente reconocido: {user_name}")
-        # speak_text(f"Bienvenido de nuevo, {user_name}.") # Mensaje de bienvenida eliminado
-        if user_name in patients_db:
-            patient_data = patients_db[user_name]
+        user_name_identified = candidate
+        print(f"Paciente reconocido: {user_name_identified}")
+        # No se imprime mensaje de bienvenida aquí para evitar redundancia.
+        if user_name_identified in patients_db:
+            patient_data_identified = patients_db[user_name_identified]
         else:
             # Esto podría ocurrir si la cara está en la base de datos facial pero no en la de pacientes
-            patient_data = {
-                'nombre': user_name,
+            patient_data_identified = {
+                'nombre': user_name_identified,
                 'edad': 'desconocida',
                 'peso': 'desconocido',
                 'altura': 'desconocida',
@@ -255,18 +258,20 @@ def identify_or_register_patient(database, patients_db, image_path, current_user
                 'sexo': 'desconocido',
                 'comentario_importante': 'desconocido'
             }
-            patients_db[user_name] = patient_data
+            patients_db[user_name_identified] = patient_data_identified
             save_patients_db(patients_db)
-        return user_name, patient_data, needs_name_registration_prompt
+        return user_name_identified, patient_data_identified, needs_name_registration_prompt
     else:
         print("Cara detectada pero no registrada. Se informará a Gemini para registrar el nombre.")
         needs_name_registration_prompt = True
         # Se mantiene el usuario actual hasta que Gemini registre un nuevo nombre.
         # Gemini será responsable de pedir el nombre y usar el comando registrar_nombre.
+        # user_name_identified y patient_data_identified permanecen como los valores de current_user_name y current_patient_data
+        # Esto es crucial: no cambiamos el usuario activo hasta que Gemini lo registre.
         return current_user_name, current_patient_data, needs_name_registration_prompt
 
 
-def conversation_loop(robot, patients_db):
+def conversation_loop(robot, patients_db, face_database):
     """
     Ejecuta el bucle de conversación principal con Gemini.
     Escucha comandos, captura una imagen de interacción,
@@ -275,6 +280,7 @@ def conversation_loop(robot, patients_db):
     Args:
         robot (RobotCommandHandler): Instancia del manejador de comandos del robot.
         patients_db (dict): La base de datos de pacientes.
+        face_database (dict): La base de datos de reconocimiento facial.
     """
     conversation_messages = [] # Inicializa el historial de mensajes de la conversación
     # Inicializa el usuario y los datos del paciente para el inicio del bucle
@@ -295,32 +301,39 @@ def conversation_loop(robot, patients_db):
 
     robot.patient_data = current_patient_data # Asigna los datos iniciales al robot
 
+    # Bandera para saber si la última interacción fue para registrar un nombre
+    waiting_for_name_registration = False
+
     while True:
         # Esperar el comando de voz del usuario
         user_prompt_text = listen_for_command()
         print(f"Comando reconocido: {user_prompt_text}")
 
+        # Guardar el nombre actual antes de la identificación facial
+        previous_user_name = current_user_name
+
         # Tomar foto para reconocimiento facial y contexto espacial
         interaction_image_path = "interaction.jpg"
         user_name_from_recognition, patient_data_from_recognition, needs_name_registration = identify_or_register_patient(
-            face_recognition_module.load_database(), patients_db, interaction_image_path, current_user_name, current_patient_data
+            face_database, patients_db, interaction_image_path, current_user_name, current_patient_data
         )
 
-        # Actualizar el usuario y los datos del paciente si se reconoció una cara existente
-        # o si no se detectó ninguna cara (se mantiene el usuario actual).
-        if not needs_name_registration: # Si no necesita registro de nombre (es decir, se reconoció o no se detectó cara)
-            current_user_name = user_name_from_recognition
-            current_patient_data = patient_data_from_recognition
-            robot.patient_data = current_patient_data # Asegura que los datos del paciente estén actualizados en el robot
-
-        # Si se necesita registrar un nombre, añadir una instrucción especial al prompt para Gemini
+        # Si se necesita registrar un nombre (cara detectada pero no reconocida),
+        # se activa la bandera y se prepara el prompt para Gemini.
         if needs_name_registration:
+            waiting_for_name_registration = True
             # El prompt real del usuario se mantiene, pero se le añade una instrucción para Gemini.
             # Gemini deberá interpretar esto y usar el comando registrar_nombre.
             augmented_prompt = f"Cara no reconocida. Por favor, pide el nombre al paciente y regístralo con <registrar_nombre [nombre]>. El paciente dijo: {user_prompt_text}"
             print(f"Prompt aumentado para Gemini (registro de nombre): {augmented_prompt}")
         else:
+            waiting_for_name_registration = False # Reinicia la bandera si no se necesita registro
             augmented_prompt = user_prompt_text
+            # Si no se necesita registro, actualizamos el usuario y los datos del paciente
+            # con lo que se obtuvo de la identificación (o se mantuvo el actual si no hubo cara).
+            current_user_name = user_name_from_recognition
+            current_patient_data = patient_data_from_recognition
+            robot.patient_data = current_patient_data # Asegura que los datos del paciente estén actualizados en el robot
 
         print("Enviando tu prompt a Gemini...")
         response_text, conversation_messages = Gemini_module.gemini_interaction(
@@ -330,13 +343,21 @@ def conversation_loop(robot, patients_db):
         print("Procesando la respuesta intercalando comandos y texto:")
         robot.execute_response_segments(response_text) # Ejecuta comandos y reproduce texto de la respuesta de Gemini
 
-        # Después de que Gemini responde y ejecuta comandos, si se registró un nuevo nombre,
-        # necesitamos actualizar el current_user_name y current_patient_data.
-        # El comando `registrar_nombre` en `RobotCommandHandler` debe actualizar `robot.patient_data['nombre']`.
-        # Por lo tanto, actualizamos `current_user_name` y `current_patient_data` con los valores del robot.
-        current_user_name = robot.patient_data['nombre']
-        current_patient_data = robot.patient_data
-
+        # Después de que Gemini responde y ejecuta comandos,
+        # verificamos si se registró un nuevo nombre a través del comando <registrar_nombre>.
+        # Esto se detecta si el nombre en robot.patient_data ha cambiado y estábamos esperando un registro.
+        if waiting_for_name_registration and robot.patient_data['nombre'] != previous_user_name and robot.patient_data['nombre'] != "Paciente Desconocido":
+            newly_registered_name = robot.patient_data['nombre']
+            print(f"Gemini ha registrado un nuevo nombre: {newly_registered_name}. Registrando en la base de datos facial.")
+            # Registrar la cara en la base de datos facial con el nuevo nombre
+            # Se usa face_recognition_module.load_database() para asegurar que se trabaja con la última versión del archivo.
+            face_recognition_module.register_user(newly_registered_name, interaction_image_path, face_recognition_module.load_database())
+            speak_text(f"{newly_registered_name}, te he registrado en mi sistema.")
+            # Actualizar el usuario actual y los datos del paciente
+            current_user_name = newly_registered_name
+            current_patient_data = robot.patient_data
+            # Reiniciar la bandera de espera
+            waiting_for_name_registration = False
 
         # Actualiza los datos del paciente en la base de datos y guarda los cambios
         patients_db[current_user_name] = current_patient_data
@@ -350,14 +371,14 @@ def main():
     y comienza el bucle de conversación.
     """
     # Carga la base de datos de reconocimiento facial y la base de datos de pacientes
-    database = face_recognition_module.load_database()
+    face_database = face_recognition_module.load_database()
     patients_db = load_patients_db()
 
     # Inicializa el manejador de comandos del robot
     robot = RobotCommandHandler()
 
     # Inicia el bucle de conversación con Gemini
-    conversation_loop(robot, patients_db)
+    conversation_loop(robot, patients_db, face_database)
 
 
 if __name__ == '__main__':
