@@ -98,7 +98,13 @@ class RobotCommandHandler:
         Separa la respuesta en segmentos de texto y comandos según su orden de aparición.
         Si se encuentra un segmento de texto, se habla inmediatamente.
         Si se encuentra un comando (<comando valor>), se ejecuta inmediatamente.
+        Excluye los comandos de gestión de usuarios que se procesan por separado.
         """
+        # Remove user management commands from processing here since they're handled separately
+        import re
+        response = re.sub(r'<change_user\s+0>', '', response)
+        response = re.sub(r'<register_user\s+[^>]+>', '', response)
+        
         pattern = r'<(\w+)\s+([^>]+)>'  # Ahora captura cualquier valor hasta ">"
         current_index = 0
         # Iterar por cada coincidencia en el orden que aparece en la respuesta
