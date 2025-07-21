@@ -257,9 +257,6 @@ def handle_user_identification(database, patients_db, interaction_image_path="in
     Returns (user_name, patient_data) for the identified user.
     """
     print("Iniciando identificación de usuario...")
-    speak_text("Entendido, cambiaré de usuario.")   
-    camera_module.capture_and_save_image(interaction_image_path)
-    time.sleep(0.1)
     
     detected_face = face_recognition_module.detect_face(interaction_image_path)
     if detected_face:
@@ -279,13 +276,29 @@ def handle_user_identification(database, patients_db, interaction_image_path="in
             speak_text(f"Usuario identificado: {user_name}")
             return user_name, patient_data
         else:
+            # Face detected but not recognized - ACTUALLY REGISTER THE USER
             print("Cara detectada pero no reconocida. Pidiendo nombre para registro.")
             speak_text("Se detectó una cara, pero no está registrada. Por favor, dime tu nombre para registrarte.")
+            
+            for attempt in range(2):
+                user_name_text = listen_for_name()
+                if user_name_text:
+                    new_user_name = user_name_text.strip()
+                    # Actually register the user
+                    return handle_user_registration(new_user_name, database, patients_db, interaction_image_path)
+                else:
+                    print("Could not capture the name. Asking again.")
+                    speak_text("No se pudo capturar tu nombre. Intenta de nuevo.")
+            
+            # Registration failed after 2 attempts
+            print("Failed to capture name after 2 attempts.")
+            speak_text("No se pudo capturar el nombre. Continuando con usuario actual.")
             return None, None
     else:
-        print("No se detectó ninguna cara.")
-        speak_text("No se detectó ninguna cara.")
-        return None, None
+        # No face detected - keep current user as requested
+        print("No se detectó ninguna cara. Manteniendo usuario actual.")
+        speak_text("No se detectó ninguna cara. Manteniendo usuario actual.")
+        return "NO_FACE_DETECTED", None
 
 def handle_user_registration(user_name, database, patients_db, interaction_image_path="interaction.jpg"):
     """
@@ -329,12 +342,16 @@ def process_gemini_user_commands(response_text, database, patients_db, current_u
     change_user_match = re.search(r'<change_user\s+0>', response_text)
     if change_user_match:
         new_user_name, new_patient_data = handle_user_identification(database, patients_db)
-        if new_user_name:
-            # Remove the command from response text
+        if new_user_name and new_user_name != "NO_FACE_DETECTED":
+            # User successfully identified or registered
             cleaned_response = re.sub(r'<change_user\s+0>', '', response_text)
             return new_user_name, new_patient_data, cleaned_response
+        elif new_user_name == "NO_FACE_DETECTED":
+            # No face detected - keep current user as requested
+            cleaned_response = re.sub(r'<change_user\s+0>', '', response_text)
+            return current_user_name, robot.patient_data, cleaned_response
         else:
-            # If identification failed, return current user but signal that registration might be needed
+            # Identification/registration failed - keep current user
             cleaned_response = re.sub(r'<change_user\s+0>', '', response_text)
             return current_user_name, robot.patient_data, cleaned_response
     
@@ -388,6 +405,9 @@ def conversation_loop(robot, patients_db, user_name):
             user_name = new_user_name
             robot.patient_data = new_patient_data
             print(f"Usuario cambiado a: {user_name}")
+            # Ensure patients_db has the updated user
+            if user_name not in patients_db:
+                patients_db[user_name] = new_patient_data
         
         print("Procesando la respuesta intercalando comandos y texto:")
         robot.execute_response_segments(cleaned_response)
