@@ -164,7 +164,7 @@ def save_patients_db(db, filename="patients_database.json"):
     with open(filename, "w") as f:
         json.dump(db, f, indent=4)
 
-def capture_patient_name(database, initial_image="initial.jpg"):
+def capture_patient_name(database, interaction_image="interaction.jpg"):
     """
     Performs facial recognition to identify or register a patient.
     Returns the patient's name.
@@ -172,76 +172,65 @@ def capture_patient_name(database, initial_image="initial.jpg"):
     import time
     user_name = None
     identify_user_try = 0
-    while not user_name and identify_user_try < 10:
-        if camera_module:
-            print("Please look at the camera.")
-            speak_text("Por favor, mire a la cámara.")
-            for msg in ["Tomando una nueva imagen en 3...", "2...", "1..."]:
-                print(msg)
-                speak_text(msg)
-                time.sleep(1)
-            camera_module.capture_and_save_image(initial_image)
-            detected_face = face_recognition_module.detect_face(initial_image)
-            if detected_face:
-                candidate = face_recognition_module.identify_user(initial_image, database)
-                if candidate:
-                    user_name = candidate
-                else:
-                    print("Face detected but not recognized. Asking for name to register.")
-                    speak_text("Se detectó una cara, pero no está registrada, por favor di tu nombre para registrarte.")
-                    time.sleep(1)
-                    for attempt in range(2):
-                        time.sleep(1)
-                        user_name_text = listen_for_name()
-                        if user_name_text:
-                            user_name = user_name_text.strip()
-                            face_recognition_module.register_user(user_name, initial_image, database)
-                            print(f"User {user_name} registered successfully.")
-                            break
-                        else:
-                            print("Could not capture the name. Asking again.")
-                            speak_text("No se pudo capturar tu nombre. Intenta de nuevo.")
-                    if not user_name:
-                        print("Failed to capture name after 2 attempts. Setting default name 'Paciente'.")
-                        user_name = "Paciente"
-                        break
+    while not user_name and identify_user_try < 5:
+        print("Please look at the camera.")
+        speak_text("Por favor, mire a la cámara.")
+        for msg in ["Tomando una nueva imagen en 3...", "2...", "1..."]:
+            print(msg)
+            speak_text(msg)
+            time.sleep(1)
+        camera_module.capture_and_save_image(interaction_image)
+        detected_face = face_recognition_module.detect_face(interaction_image)
+        if detected_face:
+            candidate = face_recognition_module.identify_user(interaction_image, database)
+            if candidate:
+                user_name = candidate
             else:
-                print("No face detected. Asking for name via voice.")
-                speak_text("No se detectó ninguna cara. Por favor, di tu nombre.")
+                print("Face detected but not recognized. Asking for name to register.")
+                speak_text("Se detectó una cara, pero no está registrada, por favor di tu nombre para registrarte.")
+                time.sleep(1)
                 for attempt in range(2):
+                    time.sleep(1)
                     user_name_text = listen_for_name()
                     if user_name_text:
                         user_name = user_name_text.strip()
+                        face_recognition_module.register_user(user_name, interaction_image, database)
+                        print(f"User {user_name} registered successfully.")
                         break
                     else:
                         print("Could not capture the name. Asking again.")
                         speak_text("No se pudo capturar tu nombre. Intenta de nuevo.")
-                        time.sleep(1)
                 if not user_name:
                     print("Failed to capture name after 2 attempts. Setting default name 'Paciente'.")
                     user_name = "Paciente"
                     break
-        identify_user_try += 1
-        if identify_user_try >= 10 and not user_name:
-            print("Maximum attempts reached. Defaulting to 'Paciente'.")
-            user_name = "Paciente"
-            break
-        time.sleep(1)
+        else:
+            print("No face detected. Asking for name via voice.")
+            speak_text("No se detectó ninguna cara. Por favor, di tu nombre.")
+            for attempt in range(2):
+                user_name_text = listen_for_name()
+                if user_name_text:
+                    user_name = user_name_text.strip()
+                    break
+                else:
+                    print("Could not capture the name. Asking again.")
+                    speak_text("No se pudo capturar tu nombre. Intenta de nuevo.")
+                    time.sleep(1)
+            if not user_name:
+                print("Failed to capture name after 2 attempts. Setting default name 'Paciente'.")
+                user_name = "Paciente"
+                break
+    identify_user_try += 1
+    if identify_user_try >= 3 and not user_name:
+        print("Maximum attempts reached. Defaulting to 'Paciente'.")
+        user_name = "Paciente"
+    time.sleep(1)
     return user_name
 
-def initialize_patient(database, patients_db, initial_image="initial.jpg"):
-    """
-    Captures an initial image, obtains the patient's name via facial recognition and/or voice,
-    and loads or creates the patient data in patients_db.
-    Returns (user_name, patient_data).
-    """
-    print("Capturing initial image for face recognition...")
-    if camera_module:
-        camera_module.capture_and_save_image(initial_image)
-    else:
-        print("Camera module unavailable. Using existing 'initial.jpg'.")
+def initialize_patient(database, patients_db, interaction_image="interaction.jpg"):
+    camera_module.capture_and_save_image(interaction_image)
 
-    user_name = capture_patient_name(database, initial_image)
+    user_name = capture_patient_name(database, interaction_image)
     print(f"Welcome, {user_name}!")
     speak_text(f"Bienvenido, {user_name}!")
 
@@ -268,11 +257,9 @@ def handle_user_identification(database, patients_db, interaction_image_path="in
     Returns (user_name, patient_data) for the identified user.
     """
     print("Iniciando identificación de usuario...")
-    speak_text("Entendido, cambiaré de usuario.")
-    
-    if camera_module:
-        camera_module.capture_and_save_image(interaction_image_path)
-        time.sleep(0.1)
+    speak_text("Entendido, cambiaré de usuario.")   
+    camera_module.capture_and_save_image(interaction_image_path)
+    time.sleep(0.1)
     
     detected_face = face_recognition_module.detect_face(interaction_image_path)
     if detected_face:
@@ -382,12 +369,8 @@ def conversation_loop(robot, patients_db, user_name):
         print(f"Comando reconocido: {user_prompt_text}")
 
         interaction_image_path = "interaction.jpg"
-        if camera_module:
-            camera_module.capture_and_save_image(interaction_image_path)
-            time.sleep(0.1)
-        else:
-            interaction_image_path = "initial.jpg"
-            print("Camera module unavailable. Using 'initial.jpg' for interaction.")
+        camera_module.capture_and_save_image(interaction_image_path)
+        time.sleep(0.1)
 
         print("Enviando tu prompt a Gemini...")
         response_text, conversation_messages = Gemini_module.gemini_interaction(
