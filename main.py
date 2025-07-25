@@ -17,11 +17,17 @@ except ImportError:
     print("Camera module not found. Please ensure the camera is connected and the module is installed.")
     camera_module = None
 
+# --- Add display import ---
+import display_ferpy
+
+display_ferpy.start_display()
+
 os.environ['SDL_AUDIODRIVER'] = 'alsa'  # Use ALSA for audio on Debian
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'  # Delete pygame support prompt
 
 def speak_text(text, lang='es', tld='com'):
     """Convert text to speech using gTTS and play it using pygame."""
+    display_ferpy.set_display_state('stationary')  # Show stationary circle when speaking
     tts = gTTS(text=text, lang=lang, slow=False, tld=tld)  # Use 'com.mx' for a male-like voice in Spanish
     temp_audio_file = "temp_audio.mp3"
     tts.save(temp_audio_file)
@@ -30,6 +36,7 @@ def speak_text(text, lang='es', tld='com'):
     pygame.mixer.music.play()
     while pygame.mixer.music.get_busy():
         pygame.time.Clock().tick(10)
+    display_ferpy.set_display_state('loading')  # Return to loading after speaking
 
 def record_voice_wave(filename="prompt.wav", record_seconds=5, chunk=1024, fmt=pyaudio.paInt16, channels=1, rate=44100):
     """
@@ -80,6 +87,7 @@ def listen_for_command():
     with sr.Microphone() as source:
         recognizer.adjust_for_ambient_noise(source)
         print("Micrófono activo: Esperando comando de voz...")
+        display_ferpy.set_display_state('loading')  # Show spinning circle while listening
         while True:
             try:
                 # Escucha en fragmentos de 1 segundo
@@ -94,6 +102,7 @@ def listen_for_command():
                 if any(phrase in chunk_text for phrase in activation_phrases):
                     print("Frase de activación detectada.")
                     print("Comienza a grabar el comando completo...")
+                    display_ferpy.set_display_state('line')  # Show line when command is detected
                     command_text = ""
                     last_audio_time = time.time()
                     # Se ingresa a un bucle sin ciclos intermedios. Se va actualizando
@@ -117,6 +126,7 @@ def listen_for_command():
                                 break
                     command_text = command_text.strip()
                     print(f"Comando completo: {command_text}")
+                    display_ferpy.set_display_state('loading')  # Return to loading after command
                     return command_text
             except sr.RequestError as e:
                 print(f"Error con el servicio de reconocimiento de voz: {e}")
@@ -292,4 +302,7 @@ def main():
         save_patients_db(patients_db)
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    finally:
+        display_ferpy.stop_display()
